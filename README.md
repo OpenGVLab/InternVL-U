@@ -2,7 +2,7 @@
   <img src="assets/logo.jpg" alt="InternVL-U Logo" width="80"><br>
   InternVL-U: Democratizing Unified Multimodal Models for Understanding, Reasoning, Generation and Editing
 </h1>
-d
+
 <div align="center">
 
 [![arXiv](https://img.shields.io/badge/ArXiv-Coming%20Soon-b31b1b?logo=arxiv)](#)&nbsp;
