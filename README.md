@@ -45,7 +45,7 @@ Before getting started, make sure you have installed all required dependencies.
 ```
 pip install -r requirements.txt
 ```
-Model checkpoint is available on [Hugging Face](https://huggingface.co/OpenGVLab/InternVL-U).
+Model checkpoint is available on [Hugging Face](https://huggingface.co/InternVL-U/InternVL-U).
 
 ### Inference Demo
 We provide the following demos to showcase InternVL-U’s unified pipeline for multimodal understanding, image generation, and image editing, with optional reasoning-guided (text+image) outputs.
