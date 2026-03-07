@@ -17,11 +17,10 @@ If you find our work helpful, please give us a ⭐.
 </div>
 
 ## 🎉 News
-- **[2026/03/06]** 🔥InternVL-U technical report released. 
-- **[2026/03/06]** ✨Inference code and model checkpoint released.
-- **[2026/03/06]** 🛠️GenEditEvalKit and TextEdit Benchmark released.
-
-
+- **[2026/03/06]** 🔥InternVL-U **technical report** released. 
+- **[2026/03/06]** ✨**Inference code and model checkpoint** released.
+- **[2026/03/06]** 🛠️ **GenEditEvalKit** released — a unified evaluation toolkit for multimodal image generation and editing models, designed to help developers efficiently manage inference and evaluation across numerous benchmarks for the unified multimodal model (UMM) and image generation and editing models.  Check it out on [[GitHub]](https://github.com/open-compass/GenEditEvalKit).
+- **[2026/03/06]** 📝 **TextEdit Benchmark** released — a high-quality, multi-scenario benchmark for evaluating text editing capabilities in image generation models. Try it out and see how well your model performs on challenging text editing tasks~. Check it out on [[GitHub]](https://github.com/open-compass/TextEdit).
 ## 📖 Introduction
 
 **InternVL-U** is a **4B-parameter unified multimodal model (UMM)** that brings **multimodal understanding, reasoning, image generation, image editing** into a *single* framework, aiming to **democratize omni-capable multimodal intelligence** with an efficient and practical model size.
@@ -267,4 +266,7 @@ If you find our InternVL-U useful, please cite our InternVL-U technical report u
 ```
 
 ## 🙏 Acknowledgement
-We sincerely thank the contributors of the following projects for their open-sourced code, models, and datasets. InternVL-U is built upon and inspired by: InternVL3.5, BAGEL, Qwen2.5-VL, Qwen3-VL, Qwen-Image, BLIP3-o, OpenGPT-4o-Image, ShareGPT-4o-Image, OmniGen2, UniWorld-V1, Picobanana, Nano-consist, NHR-Edit, and so on.
+
+We sincerely thank the contributors of the following open-source projects for their valuable code, models, and datasets. **InternVL-U** is built upon and inspired by these outstanding works:
+
+InternVL3.5, BAGEL, Qwen2.5-VL, Qwen3-VL, Qwen-Image, BLIP3-o, OpenGPT-4o-Image, ShareGPT-4o-Image, OmniGen2, UniWorld-V1, PicoBanana, Nano-Consist, and NHR-Edit, and so on. 
