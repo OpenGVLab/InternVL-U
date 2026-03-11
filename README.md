@@ -261,8 +261,15 @@ for idx, image in enumerate(output_images):
 If you find our InternVL-U useful, please cite our InternVL-U technical report using this BibTeX.
 
 ```
-
-
+@article{tian2026internvlu,
+      title={InternVL-U: Democratizing Unified Multimodal Models for Understanding, Reasoning, Generation and Editing},
+      author={Changyao Tian and Danni Yang and Guanzhou Chen and Erfei Cui and Zhaokai Wang and Yuchen Duan and Penghao Yin and Sitao Chen and Ganlin Yang and Mingxin Liu and Zirun Zhu and Ziqian Fan and Leyao Gu and Haomin Wang and Qi Wei and Jinhui Yin and Xue Yang and Zhihang Zhong and Qi Qin and Yi Xin and Bin Fu and Yihao Liu and Jiaye Ge and Qipeng Guo and Gen Luo and Hongsheng Li and Yu Qiao and Kai Chen and Hongjie Zhang},
+      year={2026},
+      eprint={2603.09877},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2603.09877}
+}
 ```
 
 ## 🙏 Acknowledgement
