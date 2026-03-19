@@ -17,10 +17,11 @@ If you find our work helpful, please give us a ⭐.
 </div>
 
 ## 🎉 News
-- **[2026/03/06]** 🔥InternVL-U **technical report** released. 
-- **[2026/03/06]** ✨**Inference code and model checkpoint** released.
+- **[2026/03/06]** 🔥InternVL-U **technical report** released.  Check it out on [[arXiv]](https://arxiv.org/abs/2603.09877). 
+- **[2026/03/06]** ✨**Inference code and model checkpoint** released. Check it out on [[Hugging Face]](https://huggingface.co/InternVL-U/InternVL-U).
 - **[2026/03/06]** 🛠️ **GenEditEvalKit** released — a unified evaluation toolkit for multimodal image generation and editing models, designed to help developers efficiently manage inference and evaluation across numerous benchmarks for the unified multimodal model (UMM) and image generation and editing models.  Check it out on [[GitHub]](https://github.com/open-compass/GenEditEvalKit).
 - **[2026/03/06]** 📝 **TextEdit Benchmark** released — a high-quality, multi-scenario benchmark for evaluating text editing capabilities in image generation models. Try it out and see how well your model performs on challenging text editing tasks~. Check it out on [[GitHub]](https://github.com/open-compass/TextEdit).
+- **[2026/03/19]** We now support multi-image understanding inference. Use the examples from Quick Start.
 ## 📖 Introduction
 
 **InternVL-U** is a **4B-parameter unified multimodal model (UMM)** that brings **multimodal understanding, reasoning, image generation, image editing** into a *single* framework, aiming to **democratize omni-capable multimodal intelligence** with an efficient and practical model size.
@@ -61,6 +62,43 @@ from internvlu import InternVLUPipeline
 
 prompt = "What is the amino acid shown in the picture?"
 image = Image.open("assets/amino_acid.png").convert("RGB")
+
+pipeline = InternVLUPipeline.from_pretrained(
+    "/path/to/internvl-u-checkpoint",
+    torch_dtype=torch.bfloat16,
+)
+
+pipeline.to("cuda")
+
+tokenizer = pipeline.processor.tokenizer
+
+with torch.no_grad():
+    output = pipeline(
+        prompt=prompt,
+        image=image,
+        max_new_tokens=1024,
+        generation_mode="text",
+    ).generate_output[0]
+
+print(tokenizer.decode(output, skip_special_tokens=True))
+```
+
+</details>
+
+<details>
+<summary><b>Generate Text with Multi Images</b> - Click to expand</summary>
+
+```python
+import torch
+from PIL import Image
+from internvlu import InternVLUPipeline
+
+prompt = "Tell me the difference of the two pictures."
+images = [
+[Image.open("assets/logo.jpg").convert("RGB"),
+Image.open("assets/logo_zh.jpg").convert("RGB"),]
+]
+
 
 pipeline = InternVLUPipeline.from_pretrained(
     "/path/to/internvl-u-checkpoint",
