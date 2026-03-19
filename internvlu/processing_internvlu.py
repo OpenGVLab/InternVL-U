@@ -353,17 +353,16 @@ class InternVLUFixResGenerationImageProcessor(BaseImageProcessor):
             processed.append(normalized)
 
         batch = torch.stack(processed)
+
+        h_grid = batch.shape[-2] // self.patch_size
+        w_grid = batch.shape[-1] // self.patch_size
+
         image_grid_thw = torch.tensor(
-            [
-                [
-                    1,
-                    batch.shape[-2] // self.patch_size,
-                    batch.shape[-1] // self.patch_size,
-                ]
-                * batch.shape[0]
-            ],
+            [[1, h_grid, w_grid] for _ in range(batch.shape[0])],
             dtype=torch.long,
+            device=batch.device,
         )
+
         return BatchFeature(
             data={"pixel_values": batch, "image_grid_thw": image_grid_thw},
             tensor_type=return_tensors,
@@ -1101,7 +1100,17 @@ class InternVLUProcessor(ProcessorMixin):
 
         messages_list = []
         for img, t in zip(image, prompt):
-            messages = self._build_messages(t, no_image)
+            img_list = make_flat_list_of_images([img]) if img is not None else []
+            n_imgs = len(img_list)
+
+            if n_imgs > 0:
+                n_slots = t.count("<image>")
+                if n_slots == 0:
+                    t = "<image>\n" * n_imgs + t
+                elif n_slots < n_imgs:
+                    t = "<image>\n" * (n_imgs - n_slots) + t
+
+            messages = self._build_messages(t, no_image=(n_imgs == 0))
             messages_list.append(messages)
 
         if generation_mode == "text":
@@ -1170,18 +1179,22 @@ class InternVLUProcessor(ProcessorMixin):
                     image_num_patches = image_inputs.pop("num_patches")
                     image_pixel_values = image_inputs.pop("pixel_values")
 
-                    image_gen_inputs = self.image_gen_processor(
-                        images=img, return_tensors="pt"
-                    )
-                    image_gen_pixel_values = image_gen_inputs.pop("pixel_values")
-                    if not self.fix_resolution:
-                        image_gen_pixel_values = image_gen_pixel_values.reshape(
-                            image_gen_inputs["image_grid_thw"].prod(),
-                            -1,
-                            self.image_gen_processor.patch_size,
-                            self.image_gen_processor.patch_size,
+                    if generation_mode != "text":
+                        image_gen_inputs = self.image_gen_processor(
+                            images=img, return_tensors="pt"
                         )
-                    image_grid_thw = image_gen_inputs.pop("image_grid_thw")
+                        image_gen_pixel_values = image_gen_inputs.pop("pixel_values")
+                        if not self.fix_resolution:
+                            image_gen_pixel_values = image_gen_pixel_values.reshape(
+                                image_gen_inputs["image_grid_thw"].prod(),
+                                -1,
+                                self.image_gen_processor.patch_size,
+                                self.image_gen_processor.patch_size,
+                            )
+                        image_grid_thw = image_gen_inputs.pop("image_grid_thw")
+                    else:
+                        image_gen_pixel_values = None
+                        image_grid_thw = None
 
                     image_num_patches_indices = np.cumsum(image_num_patches)
 
