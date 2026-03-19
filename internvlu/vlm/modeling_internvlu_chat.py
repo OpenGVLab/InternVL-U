@@ -66,7 +66,7 @@ class InternVLUChatModel(PreTrainedModel):
         config: InternVLUChatConfig,
         vision_model=None,
         language_model=None,
-        use_flash_attn=True,
+        use_flash_attn=None,
     ):
         super().__init__(config)
 
@@ -82,7 +82,8 @@ class InternVLUChatModel(PreTrainedModel):
         self.downsample_ratio = config.downsample_ratio
         self.patch_aspect_ratio = 1.0
         self.ps_version = config.ps_version
-        use_flash_attn = use_flash_attn if has_flash_attn else False
+        use_flash_attn = getattr(config.vision_config, "use_flash_attn", True) if use_flash_attn is None else use_flash_attn
+        use_flash_attn = bool(use_flash_attn) and has_flash_attn
         config.vision_config.use_flash_attn = True if use_flash_attn else False
         config.llm_config._attn_implementation = (
             "flash_attention_2" if use_flash_attn else "eager"
