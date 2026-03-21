@@ -947,7 +947,7 @@ class InternVLUTransformerBlock(nn.Module):
             out_dim=dim,
             context_pre_only=False,
             bias=True,
-            processor=InternVLUDoubleStreamFlashAttnProcessor(),
+            processor=(InternVLUDoubleStreamFlashAttnProcessor()if is_flash_attn_2_available() else InternVLUDoubleStreamTorchAttnProcessor()),
             qk_norm=qk_norm,
             eps=eps,
         )
@@ -1641,6 +1641,315 @@ class InternVLUDoubleStreamFlashAttnProcessor:
             (cu_seqlens_q, cu_seqlens_k),
             (max_seqlen_in_batch_q, max_seqlen_in_batch_k),
         )
+
+
+class InternVLUDoubleStreamTorchAttnProcessor:
+    """
+    Torch SDPA processor for InternVLU double-stream architecture.
+    Structure matches InternVLUDoubleStreamFlashAttnProcessor, but does not use flash-attn.
+    """
+
+    _attention_backend = "torch_sdpa"
+
+    def __init__(self):
+        if not hasattr(F, "scaled_dot_product_attention"):
+            raise ImportError(
+                "InternVLUDoubleStreamTorchAttnProcessor requires PyTorch 2.0+ "
+                "(torch.nn.functional.scaled_dot_product_attention)."
+            )
+        self.is_causal = False
+
+    def _call_ve(
+        self,
+        attn: AttentionVE,
+        hidden_states: torch.FloatTensor,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        image_rotary_emb: Optional[torch.Tensor] = None,
+        enc_token_mask: Optional[torch.Tensor] = None,
+        padding_type: str = "pad",
+    ):
+        dtype = attn.to_v.weight.dtype
+
+        enc_mask = enc_token_mask.unsqueeze(-1).to(dtype)
+        img_mask = 1.0 - enc_mask
+
+        q_enc = attn.add_q_proj(hidden_states).unflatten(-1, (attn.heads, -1))
+        k_enc = attn.add_k_proj(hidden_states).unflatten(-1, (attn.heads, -1))
+        v_enc = attn.add_v_proj(hidden_states)
+
+        q_img = attn.to_q(hidden_states).unflatten(-1, (attn.heads, -1))
+        k_img = attn.to_k(hidden_states).unflatten(-1, (attn.heads, -1))
+        v_img = attn.to_v(hidden_states)
+
+        bsz, q_len = q_enc.shape[:2]
+        head_dim = attn.out_dim // attn.heads
+
+        q_enc, gate_score_enc = torch.split(q_enc, [head_dim, head_dim], dim=-1)
+        gate_score_enc = gate_score_enc.reshape(bsz, q_len, -1)
+        q_img, gate_score_img = torch.split(q_img, [head_dim, head_dim], dim=-1)
+        gate_score_img = gate_score_img.reshape(bsz, q_len, -1)
+
+        q_enc = attn.norm_added_q(q_enc)
+        k_enc = attn.norm_added_k(k_enc)
+        q_img = attn.norm_q(q_img)
+        k_img = attn.norm_k(k_img)
+
+        joint_query = (
+            q_enc * enc_mask.unsqueeze(-1) + q_img * img_mask.unsqueeze(-1)
+        ).to(dtype)
+        joint_key = (
+            k_enc * enc_mask.unsqueeze(-1) + k_img * img_mask.unsqueeze(-1)
+        ).to(dtype)
+        joint_value = (
+            (v_enc * enc_mask + v_img * img_mask)
+            .unflatten(-1, (attn.heads, -1))
+            .to(dtype)
+        )
+
+        if image_rotary_emb is not None:
+            joint_query = apply_rotary_emb_ms(
+                joint_query, image_rotary_emb, use_real=False
+            )
+            joint_key = apply_rotary_emb_ms(
+                joint_key, image_rotary_emb, use_real=False
+            )
+
+        joint_hidden_states = self._torch_attention_forward(
+            joint_query,
+            joint_key,
+            joint_value,
+            attention_mask=attention_mask,
+            query_length=q_len,
+            dropout=0.0,
+            padding_type=padding_type,
+            training=attn.training,
+        )
+
+        joint_hidden_states = joint_hidden_states.reshape(bsz, q_len, -1).contiguous()
+
+        enc_output = attn.to_add_out(joint_hidden_states)
+        img_output = attn.to_out[0](joint_hidden_states)
+        if len(attn.to_out) > 1:
+            img_output = attn.to_out[1](img_output)
+
+        attn_output = enc_output * enc_mask + img_output * img_mask
+        gate_score = gate_score_enc * enc_mask + gate_score_img * img_mask
+        attn_output = attn_output * torch.sigmoid(gate_score)
+
+        return attn_output
+
+    def _call_ori(
+        self,
+        attn: AttentionVE,
+        hidden_states: torch.FloatTensor,
+        encoder_hidden_states: torch.FloatTensor = None,
+        encoder_hidden_states_mask: torch.FloatTensor = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        image_rotary_emb: Optional[torch.Tensor] = None,
+        padding_type: str = "pad",
+    ):
+        if encoder_hidden_states is None:
+            raise ValueError(
+                "InternVLUDoubleStreamTorchAttnProcessor requires encoder_hidden_states (text stream)"
+            )
+
+        seq_txt = encoder_hidden_states.shape[1]
+
+        img_query = attn.to_q(hidden_states).unflatten(-1, (attn.heads, -1))
+        img_key = attn.to_k(hidden_states).unflatten(-1, (attn.heads, -1))
+        img_value = attn.to_v(hidden_states).unflatten(-1, (attn.heads, -1))
+
+        txt_query = attn.add_q_proj(encoder_hidden_states).unflatten(-1, (attn.heads, -1))
+        txt_key = attn.add_k_proj(encoder_hidden_states).unflatten(-1, (attn.heads, -1))
+        txt_value = attn.add_v_proj(encoder_hidden_states).unflatten(-1, (attn.heads, -1))
+
+        if attn.norm_q is not None:
+            img_query = attn.norm_q(img_query)
+        if attn.norm_k is not None:
+            img_key = attn.norm_k(img_key)
+        if attn.norm_added_q is not None:
+            txt_query = attn.norm_added_q(txt_query)
+        if attn.norm_added_k is not None:
+            txt_key = attn.norm_added_k(txt_key)
+
+        if image_rotary_emb is not None:
+            img_freqs, txt_freqs = image_rotary_emb
+            img_query = apply_rotary_emb_ms(img_query, img_freqs, use_real=False)
+            img_key = apply_rotary_emb_ms(img_key, img_freqs, use_real=False)
+            txt_query = apply_rotary_emb_ms(txt_query, txt_freqs, use_real=False)
+            txt_key = apply_rotary_emb_ms(txt_key, txt_freqs, use_real=False)
+
+        joint_query = torch.cat([txt_query, img_query], dim=1)
+        joint_key = torch.cat([txt_key, img_key], dim=1)
+        joint_value = torch.cat([txt_value, img_value], dim=1)
+
+        q_len = joint_query.shape[1]
+        joint_hidden_states = self._torch_attention_forward(
+            joint_query,
+            joint_key,
+            joint_value,
+            attention_mask=None,
+            query_length=q_len,
+            dropout=0.0,
+            padding_type=padding_type,
+            training=attn.training,
+        )
+        joint_hidden_states = joint_hidden_states.flatten(2, 3).to(joint_query.dtype)
+
+        txt_attn_output = joint_hidden_states[:, :seq_txt, :]
+        img_attn_output = joint_hidden_states[:, seq_txt:, :]
+
+        img_attn_output = attn.to_out[0](img_attn_output)
+        if len(attn.to_out) > 1:
+            img_attn_output = attn.to_out[1](img_attn_output)
+
+        txt_attn_output = attn.to_add_out(txt_attn_output)
+
+        return img_attn_output, txt_attn_output
+
+    def __call__(
+        self,
+        attn: AttentionVE,
+        hidden_states: torch.FloatTensor,
+        encoder_hidden_states: torch.FloatTensor = None,
+        encoder_hidden_states_mask: torch.FloatTensor = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        image_rotary_emb: Optional[torch.Tensor] = None,
+        enc_token_mask: Optional[torch.Tensor] = None,
+        padding_type: str = "pad",
+        attn_mode: str = "default",
+    ):
+        if attn_mode == "default":
+            return self._call_ori(
+                attn,
+                hidden_states,
+                encoder_hidden_states,
+                encoder_hidden_states_mask,
+                attention_mask,
+                image_rotary_emb,
+                padding_type,
+            )
+        if attn_mode == "ve":
+            return self._call_ve(
+                attn,
+                hidden_states,
+                attention_mask,
+                image_rotary_emb,
+                enc_token_mask,
+                padding_type,
+            )
+        raise ValueError(f"Unknown attn_mode: {attn_mode}")
+
+    def _torch_attention_forward(
+        self,
+        query_states,
+        key_states,
+        value_states,
+        attention_mask,
+        query_length,
+        dropout=0.0,
+        padding_type="pad",
+        training=False,
+    ):
+        if padding_type == "pad":
+            return self._torch_attention_forward_pad(
+                query_states=query_states,
+                key_states=key_states,
+                value_states=value_states,
+                attention_mask=attention_mask,
+                query_length=query_length,
+                dropout=dropout,
+                training=training,
+            )
+        if padding_type == "pack":
+            return self._torch_attention_forward_pack(
+                query_states=query_states,
+                key_states=key_states,
+                value_states=value_states,
+                attention_mask=attention_mask,
+                query_length=query_length,
+                dropout=dropout,
+                training=training,
+            )
+        raise ValueError(f"padding_type should be either `pad` or `pack`, got {padding_type}")
+
+    def _torch_attention_forward_pad(
+        self,
+        query_states,   # [B, Sq, H, D]
+        key_states,     # [B, Sk, H, D]
+        value_states,   # [B, Sk, H, D]
+        attention_mask, # [B, Sk] (1 valid / 0 pad) or None
+        query_length,
+        dropout=0.0,
+        training=False,
+    ):
+        q = query_states.transpose(1, 2)  # [B, H, Sq, D]
+        k = key_states.transpose(1, 2)    # [B, H, Sk, D]
+        v = value_states.transpose(1, 2)  # [B, H, Sk, D]
+
+        attn_mask_4d = None
+        if attention_mask is not None:
+            if attention_mask.shape[-1] != k.shape[-2]:
+                attention_mask = attention_mask[:, -k.shape[-2]:]
+            valid_k = attention_mask.to(torch.bool)  # [B, Sk]
+            neg_inf = torch.finfo(q.dtype).min
+            attn_mask_4d = torch.zeros(
+                (q.shape[0], 1, q.shape[-2], k.shape[-2]),
+                dtype=q.dtype,
+                device=q.device,
+            )
+            attn_mask_4d = attn_mask_4d.masked_fill(~valid_k[:, None, None, :], neg_inf)
+
+        out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask_4d,
+            dropout_p=dropout if training else 0.0,
+            is_causal=self.is_causal,
+        )  # [B, H, Sq, D]
+
+        return out.transpose(1, 2).contiguous()  # [B, Sq, H, D]
+
+    def _torch_attention_forward_pack(
+        self,
+        query_states,   # [1, S, H, D]
+        key_states,     # [1, S, H, D]
+        value_states,   # [1, S, H, D]
+        attention_mask, # [1, n_seq+1] cumulative lengths
+        query_length,
+        dropout=0.0,
+        training=False,
+    ):
+        assert query_states.size(0) == key_states.size(0) == value_states.size(0) == 1
+        cu = attention_mask.squeeze(0).to(dtype=torch.long)  # [n_seq+1]
+
+        outputs = []
+        for i in range(cu.numel() - 1):
+            s = cu[i].item()
+            e = cu[i + 1].item()
+            if e <= s:
+                continue
+
+            q_seg = query_states[:, s:e]  # [1, Li, H, D]
+            k_seg = key_states[:, s:e]
+            v_seg = value_states[:, s:e]
+
+            out_seg = self._torch_attention_forward_pad(
+                query_states=q_seg,
+                key_states=k_seg,
+                value_states=v_seg,
+                attention_mask=None,
+                query_length=e - s,
+                dropout=dropout,
+                training=training,
+            )
+            outputs.append(out_seg)
+
+        if len(outputs) == 0:
+            return torch.empty_like(query_states)
+
+        return torch.cat(outputs, dim=1)
 
 
 class AdaLayerNormContinuous(nn.Module):
