@@ -86,7 +86,7 @@ class InternVLUChatModel(PreTrainedModel):
         use_flash_attn = bool(use_flash_attn) and has_flash_attn
         config.vision_config.use_flash_attn = True if use_flash_attn else False
         config.llm_config._attn_implementation = (
-            "flash_attention_2" if use_flash_attn else "eager"
+            "flash_attention_2" if use_flash_attn else "sdpa"
         )
 
         logger.info(f"num_image_token: {self.num_image_token}")

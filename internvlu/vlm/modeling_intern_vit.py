@@ -304,6 +304,40 @@ class InternAttention(nn.Module):
         x = self.proj_drop(x)
         return x
 
+    def _sdpa_attn(self, x):
+        B, N, C = x.shape
+        qkv = (
+            self.qkv(x)
+            .reshape(B, N, 3, self.num_heads, C // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
+        q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
+
+        if self.qk_normalization:
+            B_, H_, N_, D_ = q.shape
+            q = (
+                self.q_norm(q.transpose(1, 2).flatten(-2, -1))
+                .view(B_, N_, H_, D_)
+                .transpose(1, 2)
+            )
+            k = (
+                self.k_norm(k.transpose(1, 2).flatten(-2, -1))
+                .view(B_, N_, H_, D_)
+                .transpose(1, 2)
+            )
+
+        x = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            scale=self.scale,
+            dropout_p=self.attn_drop.p if self.training else 0.0,
+        )
+        x = x.transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
     def _flash_attn(self, x, key_padding_mask=None, need_weights=False):
         qkv = self.qkv(x)
         qkv = rearrange(
@@ -328,7 +362,7 @@ class InternAttention(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         x = (
-            self._naive_attn(hidden_states)
+            self._sdpa_attn(hidden_states)
             if not self.use_flash_attn
             else self._flash_attn(hidden_states)
         )

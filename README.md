@@ -47,6 +47,25 @@ pip install -r requirements.txt
 ```
 Model checkpoint is available on [Hugging Face](https://huggingface.co/InternVL-U/InternVL-U).
 
+### Running on Ascend NPU
+
+InternVL-U also runs on Huawei Ascend NPU (e.g. 910B) via [torch_npu](https://gitee.com/ascend/pytorch). On NPU the Dao `flash_attn` package is not used; the LLM and the InternViT vision encoder both fall back to the portable `F.scaled_dot_product_attention` backend, which `torch_npu` maps to the NPU flash-attention kernel.
+
+Setup:
+
+1. Install the CANN toolkit and `torch_npu` (matching your torch version), then source the CANN environment:
+   ```bash
+   source /usr/local/Ascend/ascend-toolkit/latest/set_env.sh
+   ```
+2. `flash_attn` is **not** required on NPU — you may skip installing it.
+3. Move the pipeline to `npu` and create the generator on `npu`:
+   ```python
+   pipeline.to("npu")
+   generator = torch.Generator(device="npu").manual_seed(42)
+   ```
+
+> This change adds NPU **functional** support (correctness + native flash attention through SDPA). Additional NPU performance optimizations (e.g. fused Qwen3 ops, graph capture) are out of scope here.
+
 ### Inference Demo
 We provide the following demos to showcase InternVL-U’s unified pipeline for multimodal understanding, image generation, and image editing, with optional reasoning-guided (text+image) outputs.
 
